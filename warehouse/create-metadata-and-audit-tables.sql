@@ -27,13 +27,16 @@ CREATE TABLE dbo.config_ingestion (
 );
 
 -- Seed rows for the tutorial (3 active CSVs + 1 disabled to prove the filter works).
+-- Row 5 (inventory) is added later to simulate "onboarding a new data source"
+-- without touching the pipeline — just INSERT and re-run.
 INSERT INTO dbo.config_ingestion
     (source_id, source_system, source_path,                  file_format, target_table, load_mode, is_active)
 VALUES
     (1, 'adls_sales', 'raw/sales/customers.csv', 'csv', 'customers', 'full', 1),
     (2, 'adls_sales', 'raw/sales/orders.csv',    'csv', 'orders',    'full', 1),
     (3, 'adls_sales', 'raw/sales/products.csv',  'csv', 'products',  'full', 1),
-    (4, 'adls_sales', 'raw/sales/legacy.csv',    'csv', 'legacy',    'full', 0);  -- disabled on purpose
+    (4, 'adls_sales', 'raw/sales/legacy.csv',    'csv', 'legacy',    'full', 0),  -- disabled on purpose
+    (5, 'adls_sales', 'raw/sales/inventory.csv', 'csv', 'inventory', 'full', 1);  -- NEW source added without changing the pipeline
 
 -- ---------- 2. audit_log (run history) ---------------------------------------
 --
