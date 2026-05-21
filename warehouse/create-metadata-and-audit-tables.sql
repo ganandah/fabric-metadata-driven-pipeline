@@ -36,7 +36,8 @@ VALUES
     (2, 'adls_sales', 'raw/sales/orders.csv',    'csv', 'orders',    'full', 1),
     (3, 'adls_sales', 'raw/sales/products.csv',  'csv', 'products',  'full', 1),
     (4, 'adls_sales', 'raw/sales/legacy.csv',    'csv', 'legacy',    'full', 0),  -- disabled on purpose
-    (5, 'adls_sales', 'raw/sales/inventory.csv', 'csv', 'inventory', 'full', 1);  -- NEW source added without changing the pipeline
+    (5, 'adls_sales', 'raw/sales/inventory.csv', 'csv', 'inventory', 'full', 1),  -- NEW source added without changing the pipeline
+    (6, 'adls_sales', 'raw/sales/shipments.csv', 'csv', 'shipments', 'full', 1);  -- NEW source added without changing the pipeline
 
 -- ---------- 2. audit_log (run history) ---------------------------------------
 --

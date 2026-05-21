@@ -6,8 +6,10 @@ End-to-end tutorial for building a **metadata-driven data ingestion pipeline** i
 
 - **[Tutorial-Metadata-Driven-Pipeline-Fabric.md](Tutorial-Metadata-Driven-Pipeline-Fabric.md)** — full 14-section walkthrough.
 - **[warehouse/create-metadata-and-audit-tables.sql](warehouse/create-metadata-and-audit-tables.sql)** — one-click T-SQL script to provision `config_ingestion` and `audit_log` in a Fabric Warehouse.
+- **[warehouse/create-monitoring-views.sql](warehouse/create-monitoring-views.sql)** — reporting views (`vw_audit_log`, `vw_run_summary`) for the Power BI dashboard.
 - **[pipeline/pl_metadata_ingest.json](pipeline/pl_metadata_ingest.json)** — pipeline JSON ready to paste into Fabric's *Edit JSON code* dialog.
-- **[sample-data/](sample-data/)** — three small CSV files (`customers.csv`, `orders.csv`, `products.csv`) for the tutorial. All data is fictional and uses `@example.com` addresses.
+- **[powerbi/README.md](powerbi/README.md)** — step-by-step guide to build the Pipeline Monitoring report (DAX measures + visuals).
+- **[sample-data/](sample-data/)** — five CSV files (`customers.csv`, `orders.csv`, `products.csv`, `inventory.csv`, `shipments.csv`) for the tutorial. All data is fictional and uses `@example.com` addresses.
 
 ## Prerequisites
 
@@ -18,10 +20,11 @@ End-to-end tutorial for building a **metadata-driven data ingestion pipeline** i
 ## Quick start
 
 1. In your Fabric workspace, create a Lakehouse named `lh_ingestion_demo` and a Warehouse named `wh_ingestion_demo`.
-2. Upload the three CSVs from [sample-data/](sample-data/) into a `raw/sales/` folder in your ADLS Gen2 container.
+2. Upload the CSVs from [sample-data/](sample-data/) into a `raw/sales/` folder in your ADLS Gen2 container.
 3. In `wh_ingestion_demo`, open **New SQL query**, paste [warehouse/create-metadata-and-audit-tables.sql](warehouse/create-metadata-and-audit-tables.sql), and **Run**.
 4. Create a new Data pipeline `pl_metadata_ingest`, open *Edit JSON code*, paste the contents of [pipeline/pl_metadata_ingest.json](pipeline/pl_metadata_ingest.json), and replace the `<PLACEHOLDER>` connection / workspace / lakehouse IDs.
-5. Follow [Tutorial-Metadata-Driven-Pipeline-Fabric.md](Tutorial-Metadata-Driven-Pipeline-Fabric.md) for the full walkthrough, monitoring, and Power BI reporting steps.
+5. (Optional) Run [warehouse/create-monitoring-views.sql](warehouse/create-monitoring-views.sql) and follow [powerbi/README.md](powerbi/README.md) to build the monitoring dashboard.
+6. Follow [Tutorial-Metadata-Driven-Pipeline-Fabric.md](Tutorial-Metadata-Driven-Pipeline-Fabric.md) for the full walkthrough.
 
 ## License
 
