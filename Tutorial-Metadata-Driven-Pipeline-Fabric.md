@@ -1,8 +1,3 @@
----
-title: "Tutorial: Building a Simple Metadata-Driven Pipeline in Microsoft Fabric (ADLS Gen2 → Lakehouse)"
-date: 2026-05-20
----
-
 # Tutorial: Building a Simple Metadata-Driven Pipeline in Microsoft Fabric (ADLS Gen2 → Lakehouse)
 
 > ℹ️ **Note:** This is a **simplified** version of the [official Metadata-driven Ingestion Framework](https://github.com/microsoft/fabric-samples/tree/main/community-samples/Metadata-driven%20Ingestion%20Framework) in `microsoft/fabric-samples`. It keeps the core loop — **read metadata → loop → copy → land in Lakehouse** — plus a **lightweight version of auditing, email notification, and reporting** so the pattern is useful in real day-to-day work, without dragging in multi-source connectors, schema drift, or watermark management.
