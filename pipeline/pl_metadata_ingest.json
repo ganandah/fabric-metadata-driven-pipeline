@@ -1,5 +1,6 @@
 {
     "name": "pl_metadata_ingest",
+    "objectId": "",
     "properties": {
         "description": "Metadata-driven ingestion. Reads config_ingestion, loops, copies ADLS Gen2 CSV files into Lakehouse Delta tables, writes an audit_log row per source, and emails success/failure summaries based on audit_log totals.",
         "activities": [
