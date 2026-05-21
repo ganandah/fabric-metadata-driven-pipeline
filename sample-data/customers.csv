@@ -1,0 +1,11 @@
+customer_id,customer_name,email,city,country,signup_date
+1001,Andi Wijaya,andi.wijaya@example.com,Jakarta,Indonesia,2024-01-15
+1002,Budi Santoso,budi.s@example.com,Surabaya,Indonesia,2024-02-03
+1003,Citra Lestari,citra.l@example.com,Bandung,Indonesia,2024-02-20
+1004,Dewi Anggraini,dewi.a@example.com,Medan,Indonesia,2024-03-11
+1005,Eko Prasetyo,eko.p@example.com,Yogyakarta,Indonesia,2024-04-07
+1006,Fitri Handayani,fitri.h@example.com,Semarang,Indonesia,2024-05-22
+1007,Galih Pratama,galih.p@example.com,Denpasar,Indonesia,2024-06-14
+1008,Hana Marlina,hana.m@example.com,Makassar,Indonesia,2024-07-30
+1009,Indra Kurniawan,indra.k@example.com,Palembang,Indonesia,2024-08-19
+1010,Joko Susilo,joko.s@example.com,Malang,Indonesia,2024-09-05

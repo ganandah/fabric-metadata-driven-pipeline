@@ -1,0 +1,287 @@
+{
+    "name": "pl_metadata_ingest",
+    "objectId": "00000000-0000-0000-0000-000000000000",
+    "properties": {
+        "description": "Metadata-driven ingestion. Reads config_ingestion, loops, copies ADLS Gen2 CSV files into Lakehouse Delta tables, writes an audit_log row per source, and emails success/failure summaries.",
+        "activities": [
+            {
+                "name": "LKP_Config",
+                "type": "Lookup",
+                "dependsOn": [],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlServerSource",
+                        "sqlReaderQuery": "SELECT * FROM config_ingestion WHERE is_active = true;",
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "datasetSettings": {
+                        "annotations": [],
+                        "type": "SqlServerTable",
+                        "schema": [],
+                        "typeProperties": {
+                            "schema": "dbo",
+                            "table": "config_ingestion"
+                        },
+                        "externalReferences": {
+                            "connection": "<LAKEHOUSE_SQL_ENDPOINT_CONNECTION_ID>"
+                        }
+                    },
+                    "firstRowOnly": false
+                }
+            },
+            {
+                "name": "FE_PerSource",
+                "type": "ForEach",
+                "dependsOn": [
+                    {
+                        "activity": "LKP_Config",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "typeProperties": {
+                    "items": {
+                        "value": "@activity('LKP_Config').output.value",
+                        "type": "Expression"
+                    },
+                    "isSequential": false,
+                    "activities": [
+                        {
+                            "name": "CP_AdlsToLakehouse",
+                            "type": "Copy",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "typeProperties": {
+                                "source": {
+                                    "type": "DelimitedTextSource",
+                                    "storeSettings": {
+                                        "type": "AzureBlobFSReadSettings",
+                                        "recursive": false,
+                                        "enablePartitionDiscovery": false
+                                    },
+                                    "formatSettings": {
+                                        "type": "DelimitedTextReadSettings"
+                                    },
+                                    "datasetSettings": {
+                                        "annotations": [],
+                                        "type": "DelimitedText",
+                                        "typeProperties": {
+                                            "location": {
+                                                "type": "AzureBlobFSLocation",
+                                                "fileName": {
+                                                    "value": "@item().source_path",
+                                                    "type": "Expression"
+                                                }
+                                            },
+                                            "columnDelimiter": ",",
+                                            "escapeChar": "\\",
+                                            "firstRowAsHeader": true,
+                                            "quoteChar": "\""
+                                        },
+                                        "schema": [],
+                                        "externalReferences": {
+                                            "connection": "<ADLS_GEN2_CONNECTION_ID>"
+                                        }
+                                    }
+                                },
+                                "sink": {
+                                    "type": "LakehouseTableSink",
+                                    "tableActionOption": {
+                                        "value": "@if(equals(item().load_mode,'full'),'Overwrite','Append')",
+                                        "type": "Expression"
+                                    },
+                                    "datasetSettings": {
+                                        "annotations": [],
+                                        "linkedService": {
+                                            "name": "lh_ingestion_demo",
+                                            "properties": {
+                                                "annotations": [],
+                                                "type": "Lakehouse",
+                                                "typeProperties": {
+                                                    "workspaceId": "<WORKSPACE_ID>",
+                                                    "artifactId": "<LAKEHOUSE_ID>",
+                                                    "rootFolder": "Tables"
+                                                }
+                                            }
+                                        },
+                                        "type": "LakehouseTable",
+                                        "schema": [],
+                                        "typeProperties": {
+                                            "table": {
+                                                "value": "@item().target_table",
+                                                "type": "Expression"
+                                            }
+                                        }
+                                    }
+                                },
+                                "enableStaging": false,
+                                "translator": {
+                                    "type": "TabularTranslator",
+                                    "typeConversion": true,
+                                    "typeConversionSettings": {
+                                        "allowDataTruncation": true,
+                                        "treatBooleanAsNumber": false
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "name": "SCR_Audit_Success",
+                            "type": "Script",
+                            "dependsOn": [
+                                {
+                                    "activity": "CP_AdlsToLakehouse",
+                                    "dependencyConditions": [
+                                        "Succeeded"
+                                    ]
+                                }
+                            ],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "typeProperties": {
+                                "scripts": [
+                                    {
+                                        "type": "NonQuery",
+                                        "text": {
+                                            "value": "INSERT INTO audit_log (run_id, source_id, target_table, start_time, end_time, duration_sec, rows_copied, status, error_message) VALUES ('@{pipeline().RunId}', @{item().source_id}, '@{item().target_table}', '@{activity('CP_AdlsToLakehouse').executionStartTime}', '@{activity('CP_AdlsToLakehouse').executionEndTime}', @{activity('CP_AdlsToLakehouse').output.copyDuration}, @{activity('CP_AdlsToLakehouse').output.rowsCopied}, 'success', NULL);",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                ],
+                                "scriptBlockExecutionTimeout": "02:00:00"
+                            },
+                            "externalReferences": {
+                                "connection": "<LAKEHOUSE_SQL_ENDPOINT_CONNECTION_ID>"
+                            }
+                        },
+                        {
+                            "name": "SCR_Audit_Failure",
+                            "type": "Script",
+                            "dependsOn": [
+                                {
+                                    "activity": "CP_AdlsToLakehouse",
+                                    "dependencyConditions": [
+                                        "Failed"
+                                    ]
+                                }
+                            ],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "typeProperties": {
+                                "scripts": [
+                                    {
+                                        "type": "NonQuery",
+                                        "text": {
+                                            "value": "INSERT INTO audit_log (run_id, source_id, target_table, start_time, end_time, duration_sec, rows_copied, status, error_message) VALUES ('@{pipeline().RunId}', @{item().source_id}, '@{item().target_table}', '@{utcNow()}', '@{utcNow()}', 0, 0, 'failed', '@{replace(coalesce(activity('CP_AdlsToLakehouse').error.message, 'unknown'), '''', '\"')}');",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                ],
+                                "scriptBlockExecutionTimeout": "02:00:00"
+                            },
+                            "externalReferences": {
+                                "connection": "<LAKEHOUSE_SQL_ENDPOINT_CONNECTION_ID>"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "name": "EMAIL_Success",
+                "type": "Office365Outlook",
+                "dependsOn": [
+                    {
+                        "activity": "FE_PerSource",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "to": "data-ops@yourcompany.com",
+                    "subject": {
+                        "value": "[Fabric] pl_metadata_ingest SUCCESS - @{pipeline().RunId}",
+                        "type": "Expression"
+                    },
+                    "body": {
+                        "value": "<p>Pipeline <b>pl_metadata_ingest</b> completed successfully.</p><ul><li>Run ID: @{pipeline().RunId}</li><li>Started: @{pipeline().TriggerTime}</li><li>Workspace: @{pipeline().DataFactory}</li></ul><p>See the <b>Pipeline Monitoring</b> report for per-table row counts.</p>",
+                        "type": "Expression"
+                    },
+                    "importance": "Normal"
+                },
+                "externalReferences": {
+                    "connection": "<OFFICE365_OUTLOOK_CONNECTION_ID>"
+                }
+            },
+            {
+                "name": "EMAIL_Failure",
+                "type": "Office365Outlook",
+                "dependsOn": [
+                    {
+                        "activity": "FE_PerSource",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "to": "data-ops@yourcompany.com",
+                    "subject": {
+                        "value": "[Fabric] pl_metadata_ingest FAILED - @{pipeline().RunId}",
+                        "type": "Expression"
+                    },
+                    "body": {
+                        "value": "<p style=\"color:#b00020\"><b>Pipeline pl_metadata_ingest FAILED.</b></p><ul><li>Run ID: @{pipeline().RunId}</li><li>Started: @{pipeline().TriggerTime}</li></ul><p>Query <code>audit_log</code> WHERE <code>run_id = '@{pipeline().RunId}'</code> for details.</p>",
+                        "type": "Expression"
+                    },
+                    "importance": "High"
+                },
+                "externalReferences": {
+                    "connection": "<OFFICE365_OUTLOOK_CONNECTION_ID>"
+                }
+            }
+        ],
+        "annotations": [],
+        "lastModifiedByObjectId": "00000000-0000-0000-0000-000000000000",
+        "lastPublishTime": "2026-01-01T00:00:00Z"
+    }
+}

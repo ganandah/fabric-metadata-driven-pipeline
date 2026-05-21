@@ -1,0 +1,14 @@
+# Agent prompt / instructions — not for publication
+github-copilot-prompt-fabric-metadata-pipeline.md
+
+# VS Code workspace settings
+.vscode/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Local memory / session notes
+/memories/
