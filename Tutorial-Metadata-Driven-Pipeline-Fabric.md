@@ -1,6 +1,5 @@
 ---
 title: "Tutorial: Building a Simple Metadata-Driven Pipeline in Microsoft Fabric (ADLS Gen2 → Lakehouse)"
-author: "Fabric Data Engineering Team"
 date: 2026-05-20
 ---
 
