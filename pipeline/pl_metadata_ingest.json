@@ -1,6 +1,5 @@
 {
     "name": "pl_metadata_ingest",
-    "objectId": "a4f2c244-34fc-4058-83da-41676a5539fc",
     "properties": {
         "description": "Metadata-driven ingestion. Reads config_ingestion, loops, copies ADLS Gen2 CSV files into Lakehouse Delta tables, writes an audit_log row per source, and emails success/failure summaries based on audit_log totals.",
         "activities": [
@@ -17,24 +16,36 @@
                 },
                 "typeProperties": {
                     "source": {
-                        "type": "SqlServerSource",
+                        "type": "DataWarehouseSource",
                         "sqlReaderQuery": "SELECT * FROM config_ingestion WHERE is_active = 1;",
                         "queryTimeout": "02:00:00",
                         "partitionOption": "None"
                     },
+                    "firstRowOnly": false,
                     "datasetSettings": {
                         "annotations": [],
-                        "type": "SqlServerTable",
+                        "connectionSettings": {
+                            "name": "wh_ingestion_demo",
+                            "properties": {
+                                "annotations": [],
+                                "type": "DataWarehouse",
+                                "typeProperties": {
+                                    "endpoint": "<WAREHOUSE_ENDPOINT>",
+                                    "artifactId": "<WAREHOUSE_ARTIFACT_ID>",
+                                    "workspaceId": "<WORKSPACE_ID>"
+                                },
+                                "externalReferences": {
+                                    "connection": "<WAREHOUSE_CONNECTION_ID>"
+                                }
+                            }
+                        },
+                        "type": "DataWarehouseTable",
                         "schema": [],
                         "typeProperties": {
                             "schema": "dbo",
                             "table": "config_ingestion"
-                        },
-                        "externalReferences": {
-                            "connection": "<WAREHOUSE_CONNECTION_ID>"
                         }
-                    },
-                    "firstRowOnly": false
+                    }
                 }
             },
             {
@@ -86,7 +97,8 @@
                                                 "fileName": {
                                                     "value": "@item().source_path",
                                                     "type": "Expression"
-                                                }
+                                                },
+                                                "folderPath": "sampledata"
                                             },
                                             "columnDelimiter": ",",
                                             "escapeChar": "\\",
@@ -105,9 +117,10 @@
                                         "value": "@if(equals(item().load_mode,'full'),'Overwrite','Append')",
                                         "type": "Expression"
                                     },
+                                    "partitionOption": "None",
                                     "datasetSettings": {
                                         "annotations": [],
-                                        "linkedService": {
+                                        "connectionSettings": {
                                             "name": "lh_ingestion_demo",
                                             "properties": {
                                                 "annotations": [],
@@ -116,12 +129,16 @@
                                                     "workspaceId": "<WORKSPACE_ID>",
                                                     "artifactId": "<LAKEHOUSE_ID>",
                                                     "rootFolder": "Tables"
+                                                },
+                                                "externalReferences": {
+                                                    "connection": "<LAKEHOUSE_CONNECTION_ID>"
                                                 }
                                             }
                                         },
                                         "type": "LakehouseTable",
                                         "schema": [],
                                         "typeProperties": {
+                                            "schema": "dbo",
                                             "table": {
                                                 "value": "@item().target_table",
                                                 "type": "Expression"
@@ -158,6 +175,21 @@
                                 "secureOutput": false,
                                 "secureInput": false
                             },
+                            "connectionSettings": {
+                                "name": "wh_ingestion_demo",
+                                "properties": {
+                                    "annotations": [],
+                                    "type": "DataWarehouse",
+                                    "typeProperties": {
+                                        "endpoint": "<WAREHOUSE_ENDPOINT>",
+                                        "artifactId": "<WAREHOUSE_ARTIFACT_ID>",
+                                        "workspaceId": "<WORKSPACE_ID>"
+                                    },
+                                    "externalReferences": {
+                                        "connection": "<WAREHOUSE_CONNECTION_ID>"
+                                    }
+                                }
+                            },
                             "typeProperties": {
                                 "scripts": [
                                     {
@@ -169,9 +201,6 @@
                                     }
                                 ],
                                 "scriptBlockExecutionTimeout": "02:00:00"
-                            },
-                            "externalReferences": {
-                                "connection": "<WAREHOUSE_CONNECTION_ID>"
                             }
                         },
                         {
@@ -192,6 +221,21 @@
                                 "secureOutput": false,
                                 "secureInput": false
                             },
+                            "connectionSettings": {
+                                "name": "wh_ingestion_demo",
+                                "properties": {
+                                    "annotations": [],
+                                    "type": "DataWarehouse",
+                                    "typeProperties": {
+                                        "endpoint": "<WAREHOUSE_ENDPOINT>",
+                                        "artifactId": "<WAREHOUSE_ARTIFACT_ID>",
+                                        "workspaceId": "<WORKSPACE_ID>"
+                                    },
+                                    "externalReferences": {
+                                        "connection": "<WAREHOUSE_CONNECTION_ID>"
+                                    }
+                                }
+                            },
                             "typeProperties": {
                                 "scripts": [
                                     {
@@ -203,9 +247,6 @@
                                     }
                                 ],
                                 "scriptBlockExecutionTimeout": "02:00:00"
-                            },
-                            "externalReferences": {
-                                "connection": "<WAREHOUSE_CONNECTION_ID>"
                             }
                         }
                     ]
@@ -231,7 +272,7 @@
                 },
                 "typeProperties": {
                     "source": {
-                        "type": "SqlServerSource",
+                        "type": "DataWarehouseSource",
                         "sqlReaderQuery": {
                             "value": "SELECT COUNT(*) AS total_rows, SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS fail_count, SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success_count, COALESCE(SUM(rows_copied), 0) AS total_rows_copied FROM dbo.audit_log WHERE run_id = '@{pipeline().RunId}';",
                             "type": "Expression"
@@ -239,19 +280,31 @@
                         "queryTimeout": "02:00:00",
                         "partitionOption": "None"
                     },
+                    "firstRowOnly": true,
                     "datasetSettings": {
                         "annotations": [],
-                        "type": "SqlServerTable",
+                        "connectionSettings": {
+                            "name": "wh_ingestion_demo",
+                            "properties": {
+                                "annotations": [],
+                                "type": "DataWarehouse",
+                                "typeProperties": {
+                                    "endpoint": "<WAREHOUSE_ENDPOINT>",
+                                    "artifactId": "<WAREHOUSE_ARTIFACT_ID>",
+                                    "workspaceId": "<WORKSPACE_ID>"
+                                },
+                                "externalReferences": {
+                                    "connection": "<WAREHOUSE_CONNECTION_ID>"
+                                }
+                            }
+                        },
+                        "type": "DataWarehouseTable",
                         "schema": [],
                         "typeProperties": {
                             "schema": "dbo",
                             "table": "audit_log"
-                        },
-                        "externalReferences": {
-                            "connection": "<WAREHOUSE_CONNECTION_ID>"
                         }
-                    },
-                    "firstRowOnly": true
+                    }
                 }
             },
             {
@@ -273,7 +326,7 @@
                     "ifFalseActivities": [
                         {
                             "name": "EMAIL_Success",
-                            "type": "Office365Outlook",
+                            "type": "Office365Email",
                             "dependsOn": [],
                             "policy": {
                                 "timeout": "0.12:00:00",
@@ -291,18 +344,17 @@
                                 "body": {
                                     "value": "<p>Pipeline <b>pl_metadata_ingest</b> completed successfully.</p><ul><li>Run ID: @{pipeline().RunId}</li><li>Started: @{pipeline().TriggerTime}</li><li>Workspace: @{pipeline().DataFactory}</li><li>Sources processed: @{activity('LKP_RunSummary').output.firstRow.success_count}</li><li>Total rows copied: @{activity('LKP_RunSummary').output.firstRow.total_rows_copied}</li></ul><p>See the <b>Pipeline Monitoring</b> report for per-table row counts.</p>",
                                     "type": "Expression"
-                                },
-                                "importance": "Normal"
+                                }
                             },
                             "externalReferences": {
-                                "connection": "<OFFICE365_OUTLOOK_CONNECTION_ID>"
+                                "connection": "<OFFICE365_EMAIL_CONNECTION_ID>"
                             }
                         }
                     ],
                     "ifTrueActivities": [
                         {
                             "name": "EMAIL_Failure",
-                            "type": "Office365Outlook",
+                            "type": "Office365Email",
                             "dependsOn": [],
                             "policy": {
                                 "timeout": "0.12:00:00",
@@ -320,11 +372,10 @@
                                 "body": {
                                     "value": "<p style=\"color:#b00020\"><b>Pipeline pl_metadata_ingest had failures.</b></p><ul><li>Run ID: @{pipeline().RunId}</li><li>Started: @{pipeline().TriggerTime}</li><li>Sources failed: @{activity('LKP_RunSummary').output.firstRow.fail_count}</li><li>Sources succeeded: @{activity('LKP_RunSummary').output.firstRow.success_count}</li></ul><p>Query <code>audit_log</code> WHERE <code>run_id = '@{pipeline().RunId}' AND status = 'failed'</code> for details.</p>",
                                     "type": "Expression"
-                                },
-                                "importance": "High"
+                                }
                             },
                             "externalReferences": {
-                                "connection": "<OFFICE365_OUTLOOK_CONNECTION_ID>"
+                                "connection": "<OFFICE365_EMAIL_CONNECTION_ID>"
                             }
                         }
                     ]

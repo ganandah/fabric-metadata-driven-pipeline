@@ -1,6 +1,9 @@
 # Agent prompt / instructions — not for publication
 github-copilot-prompt-fabric-metadata-pipeline.md
 
+# Live Fabric pipeline export (contains workspace/connection IDs)
+pipeline/pl_metadata_ingest_fabric.json
+
 # VS Code workspace settings
 .vscode/
 
