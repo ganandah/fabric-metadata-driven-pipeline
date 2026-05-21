@@ -282,7 +282,7 @@ audit_schema = StructType([
    ```sql
    SELECT *
    FROM config_ingestion
-   WHERE is_active = true;
+   WHERE is_active = 1;  -- Lakehouse SQL endpoint is T-SQL; use 1/0 for BIT, not true/false
    ```
 
 4. **Important:** uncheck **First row only** so the activity returns all rows.

@@ -1,6 +1,6 @@
 {
     "name": "pl_metadata_ingest",
-    "objectId": "00000000-0000-0000-0000-000000000000",
+    "objectId": "a4f2c244-34fc-4058-83da-41676a5539fc",
     "properties": {
         "description": "Metadata-driven ingestion. Reads config_ingestion, loops, copies ADLS Gen2 CSV files into Lakehouse Delta tables, writes an audit_log row per source, and emails success/failure summaries.",
         "activities": [
@@ -18,7 +18,7 @@
                 "typeProperties": {
                     "source": {
                         "type": "SqlServerSource",
-                        "sqlReaderQuery": "SELECT * FROM config_ingestion WHERE is_active = true;",
+                        "sqlReaderQuery": "SELECT * FROM config_ingestion WHERE is_active = 1;",
                         "queryTimeout": "02:00:00",
                         "partitionOption": "None"
                     },
