@@ -2,7 +2,7 @@
     "name": "pl_metadata_ingest",
     "objectId": "a4f2c244-34fc-4058-83da-41676a5539fc",
     "properties": {
-        "description": "Metadata-driven ingestion. Reads config_ingestion, loops, copies ADLS Gen2 CSV files into Lakehouse Delta tables, writes an audit_log row per source, and emails success/failure summaries.",
+        "description": "Metadata-driven ingestion. Reads config_ingestion, loops, copies ADLS Gen2 CSV files into Lakehouse Delta tables, writes an audit_log row per source, and emails success/failure summaries based on audit_log totals.",
         "activities": [
             {
                 "name": "LKP_Config",
@@ -212,71 +212,122 @@
                 }
             },
             {
-                "name": "EMAIL_Success",
-                "type": "Office365Outlook",
+                "name": "LKP_RunSummary",
+                "type": "Lookup",
                 "dependsOn": [
                     {
                         "activity": "FE_PerSource",
+                        "dependencyConditions": [
+                            "Completed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlServerSource",
+                        "sqlReaderQuery": {
+                            "value": "SELECT COUNT(*) AS total_rows, SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS fail_count, SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success_count, COALESCE(SUM(rows_copied), 0) AS total_rows_copied FROM dbo.audit_log WHERE run_id = '@{pipeline().RunId}';",
+                            "type": "Expression"
+                        },
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "datasetSettings": {
+                        "annotations": [],
+                        "type": "SqlServerTable",
+                        "schema": [],
+                        "typeProperties": {
+                            "schema": "dbo",
+                            "table": "audit_log"
+                        },
+                        "externalReferences": {
+                            "connection": "<WAREHOUSE_CONNECTION_ID>"
+                        }
+                    },
+                    "firstRowOnly": true
+                }
+            },
+            {
+                "name": "IF_AnyFailure",
+                "type": "IfCondition",
+                "dependsOn": [
+                    {
+                        "activity": "LKP_RunSummary",
                         "dependencyConditions": [
                             "Succeeded"
                         ]
                     }
                 ],
-                "policy": {
-                    "timeout": "0.12:00:00",
-                    "retry": 0,
-                    "retryIntervalInSeconds": 30,
-                    "secureOutput": false,
-                    "secureInput": false
-                },
                 "typeProperties": {
-                    "to": "data-ops@yourcompany.com",
-                    "subject": {
-                        "value": "[Fabric] pl_metadata_ingest SUCCESS - @{pipeline().RunId}",
+                    "expression": {
+                        "value": "@greater(int(activity('LKP_RunSummary').output.firstRow.fail_count), 0)",
                         "type": "Expression"
                     },
-                    "body": {
-                        "value": "<p>Pipeline <b>pl_metadata_ingest</b> completed successfully.</p><ul><li>Run ID: @{pipeline().RunId}</li><li>Started: @{pipeline().TriggerTime}</li><li>Workspace: @{pipeline().DataFactory}</li></ul><p>See the <b>Pipeline Monitoring</b> report for per-table row counts.</p>",
-                        "type": "Expression"
-                    },
-                    "importance": "Normal"
-                },
-                "externalReferences": {
-                    "connection": "<OFFICE365_OUTLOOK_CONNECTION_ID>"
-                }
-            },
-            {
-                "name": "EMAIL_Failure",
-                "type": "Office365Outlook",
-                "dependsOn": [
-                    {
-                        "activity": "FE_PerSource",
-                        "dependencyConditions": [
-                            "Failed"
-                        ]
-                    }
-                ],
-                "policy": {
-                    "timeout": "0.12:00:00",
-                    "retry": 0,
-                    "retryIntervalInSeconds": 30,
-                    "secureOutput": false,
-                    "secureInput": false
-                },
-                "typeProperties": {
-                    "to": "data-ops@yourcompany.com",
-                    "subject": {
-                        "value": "[Fabric] pl_metadata_ingest FAILED - @{pipeline().RunId}",
-                        "type": "Expression"
-                    },
-                    "body": {
-                        "value": "<p style=\"color:#b00020\"><b>Pipeline pl_metadata_ingest FAILED.</b></p><ul><li>Run ID: @{pipeline().RunId}</li><li>Started: @{pipeline().TriggerTime}</li></ul><p>Query <code>audit_log</code> WHERE <code>run_id = '@{pipeline().RunId}'</code> for details.</p>",
-                        "type": "Expression"
-                    },
-                    "importance": "High"
-                },
-                "externalReferences": {
-                    "connection": "<OFFICE365_OUTLOOK_CONNECTION_ID>"
+                    "ifFalseActivities": [
+                        {
+                            "name": "EMAIL_Success",
+                            "type": "Office365Outlook",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "typeProperties": {
+                                "to": "data-ops@yourcompany.com",
+                                "subject": {
+                                    "value": "[Fabric] pl_metadata_ingest SUCCESS - @{pipeline().RunId}",
+                                    "type": "Expression"
+                                },
+                                "body": {
+                                    "value": "<p>Pipeline <b>pl_metadata_ingest</b> completed successfully.</p><ul><li>Run ID: @{pipeline().RunId}</li><li>Started: @{pipeline().TriggerTime}</li><li>Workspace: @{pipeline().DataFactory}</li><li>Sources processed: @{activity('LKP_RunSummary').output.firstRow.success_count}</li><li>Total rows copied: @{activity('LKP_RunSummary').output.firstRow.total_rows_copied}</li></ul><p>See the <b>Pipeline Monitoring</b> report for per-table row counts.</p>",
+                                    "type": "Expression"
+                                },
+                                "importance": "Normal"
+                            },
+                            "externalReferences": {
+                                "connection": "<OFFICE365_OUTLOOK_CONNECTION_ID>"
+                            }
+                        }
+                    ],
+                    "ifTrueActivities": [
+                        {
+                            "name": "EMAIL_Failure",
+                            "type": "Office365Outlook",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "typeProperties": {
+                                "to": "data-ops@yourcompany.com",
+                                "subject": {
+                                    "value": "[Fabric] pl_metadata_ingest FAILED - @{pipeline().RunId}",
+                                    "type": "Expression"
+                                },
+                                "body": {
+                                    "value": "<p style=\"color:#b00020\"><b>Pipeline pl_metadata_ingest had failures.</b></p><ul><li>Run ID: @{pipeline().RunId}</li><li>Started: @{pipeline().TriggerTime}</li><li>Sources failed: @{activity('LKP_RunSummary').output.firstRow.fail_count}</li><li>Sources succeeded: @{activity('LKP_RunSummary').output.firstRow.success_count}</li></ul><p>Query <code>audit_log</code> WHERE <code>run_id = '@{pipeline().RunId}' AND status = 'failed'</code> for details.</p>",
+                                    "type": "Expression"
+                                },
+                                "importance": "High"
+                            },
+                            "externalReferences": {
+                                "connection": "<OFFICE365_OUTLOOK_CONNECTION_ID>"
+                            }
+                        }
+                    ]
                 }
             }
         ],

@@ -26,11 +26,14 @@ flowchart LR
         F --> C["Copy Activity<br/>(dynamic source/sink)"]
         C -->|on success| AS["Script: insert<br/>audit_log (success)"]
         C -->|on failure| AF["Script: insert<br/>audit_log (failed)"]
+        F --> S["Lookup<br/>audit_log summary"]
+        S --> IFC{"If any failure?"}
+        IFC -->|yes| EF["Outlook<br/>failure email"]
+        IFC -->|no| ES["Outlook<br/>success email"]
     end
     P --> LH[("Fabric Lakehouse<br/>Delta Tables")]
     AS --> W
     AF --> W
-    P -->|on overall success/failure| N["Office 365 Outlook<br/>(email notification)"]
     W --> R["Power BI report<br/>(monitoring dashboard)"]
 ```
 
@@ -242,9 +245,9 @@ CREATE TABLE dbo.audit_log (
 
 ## 7. Step 4 — Build the Data Pipeline
 
-**What:** A single pipeline with five activity types: **Lookup → ForEach { Copy → Audit Script (success / failure) } → Email notification**.
+**What:** A single pipeline: **Lookup → ForEach { Copy → Audit Script (success / failure) } → Lookup (run summary) → If Condition → Email (success or failure)**.
 
-**Why:** This skeleton expresses the full pattern — read config, loop, copy, log the outcome, and tell a human.
+**Why:** This skeleton expresses the full pattern — read config, loop, copy, log the outcome per source, summarize the run, and tell a human. Driving the email choice off `audit_log` (instead of off the ForEach status) avoids Fabric's "multi-level nesting" error for Outlook activities.
 
 ### 7.1 Create the pipeline
 
@@ -347,16 +350,46 @@ VALUES (
 
 > ⚠️ **Warning:** The single-quote escaping in the failure script is intentional — pipeline expressions use `''` to represent a literal apostrophe. Test the script once with a deliberately wrong `source_path` to confirm the failure path writes a row.
 
-### 7.6 Add the email notification (outside the ForEach)
+### 7.6 Add the email notification (Lookup → If Condition pattern)
 
-Back on the main canvas, drag two **Office 365 Outlook** activities after `FE_PerSource`:
+> ⚠️ **Why not just wire the email on `FE_PerSource` success/failure?** Fabric's Office 365 Outlook activity (a Logic-Apps-based connector) refuses to be gated directly on the success/failure of a `ForEach` that contains its own per-iteration error-handling branches. You will see:
+>
+> `ErrorCode=InvalidTemplate, ErrorMessage=cannot reference action 'SCR_Audit_Success'. The action is nested in a foreach scope of multiple levels...`
+>
+> The robust workaround is to **decide the email type from `audit_log` itself** after the ForEach completes. This also gives the email a richer body (counts, total rows) for free.
 
-- `EMAIL_Success` — connected via **green (On success)** arrow.
-- `EMAIL_Failure` — connected via **red (On failure)** arrow.
+Back on the main canvas, add three activities **after** `FE_PerSource`:
+
+#### `LKP_RunSummary` (Lookup → Warehouse)
+
+- **dependsOn:** `FE_PerSource` on **Completed** (so it runs whether the loop succeeded or failed).
+- **Connection:** Warehouse `wh_ingestion_demo`. **First row only:** checked.
+- **Query:**
+
+  ```sql
+  SELECT COUNT(*)                                            AS total_rows,
+         SUM(CASE WHEN status = 'failed'  THEN 1 ELSE 0 END) AS fail_count,
+         SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success_count,
+         COALESCE(SUM(rows_copied), 0)                       AS total_rows_copied
+  FROM   dbo.audit_log
+  WHERE  run_id = '@{pipeline().RunId}';
+  ```
+
+#### `IF_AnyFailure` (If Condition)
+
+- **dependsOn:** `LKP_RunSummary` on **Succeeded**.
+- **Expression:**
+
+  ```text
+  @greater(int(activity('LKP_RunSummary').output.firstRow.fail_count), 0)
+  ```
+
+- **True branch** → drag in an **Office 365 Outlook** activity named `EMAIL_Failure`.
+- **False branch** → drag in an **Office 365 Outlook** activity named `EMAIL_Success`.
 
 For both, sign in with the account that should send the mail, then configure:
 
-| Field | `EMAIL_Success` | `EMAIL_Failure` |
+| Field | `EMAIL_Success` (False branch) | `EMAIL_Failure` (True branch) |
 |---|---|---|
 | **To** | `data-ops@yourcompany.com` | `data-ops@yourcompany.com` |
 | **Subject** | `[Fabric] pl_metadata_ingest SUCCESS — @{pipeline().RunId}` | `[Fabric] pl_metadata_ingest FAILED — @{pipeline().RunId}` |
@@ -369,20 +402,22 @@ For both, sign in with the account that should send the mail, then configure:
 <ul>
   <li>Run ID: @{pipeline().RunId}</li>
   <li>Started: @{pipeline().TriggerTime}</li>
-  <li>Workspace: @{pipeline().DataFactory}</li>
+  <li>Sources processed: @{activity('LKP_RunSummary').output.firstRow.success_count}</li>
+  <li>Total rows copied: @{activity('LKP_RunSummary').output.firstRow.total_rows_copied}</li>
 </ul>
-<p>See the <b>Pipeline Monitoring</b> report for per-table row counts.</p>
 ```
 
 **Failure body:**
 
 ```html
-<p style="color:#b00020"><b>Pipeline pl_metadata_ingest FAILED.</b></p>
+<p style="color:#b00020"><b>Pipeline pl_metadata_ingest had failures.</b></p>
 <ul>
   <li>Run ID: @{pipeline().RunId}</li>
   <li>Started: @{pipeline().TriggerTime}</li>
+  <li>Sources failed: @{activity('LKP_RunSummary').output.firstRow.fail_count}</li>
+  <li>Sources succeeded: @{activity('LKP_RunSummary').output.firstRow.success_count}</li>
 </ul>
-<p>Query <code>audit_log</code> WHERE <code>run_id = '@{pipeline().RunId}'</code> for details.</p>
+<p>Query <code>audit_log</code> WHERE <code>run_id = '@{pipeline().RunId}' AND status = 'failed'</code> for details.</p>
 ```
 
 ![Pipeline with audit + email](images/pipeline-with-audit.png)
