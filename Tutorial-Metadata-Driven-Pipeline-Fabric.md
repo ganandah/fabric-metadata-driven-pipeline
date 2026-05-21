@@ -20,16 +20,18 @@ A **metadata-driven pipeline** is a single, generic pipeline whose behavior is s
 ```mermaid
 flowchart LR
     A[("ADLS Gen2<br/>raw files")] --> P
-    M[("config_ingestion<br/>metadata table")] --> P
+    W[("Warehouse<br/>config_ingestion + audit_log")] --> P
     subgraph P["Fabric Data Pipeline"]
         L["Lookup<br/>(read config)"] --> F["ForEach<br/>(per row)"]
         F --> C["Copy Activity<br/>(dynamic source/sink)"]
         C -->|on success| AS["Script: insert<br/>audit_log (success)"]
         C -->|on failure| AF["Script: insert<br/>audit_log (failed)"]
     end
-    P --> LH[("Fabric Lakehouse<br/>Delta Tables + audit_log")]
+    P --> LH[("Fabric Lakehouse<br/>Delta Tables")]
+    AS --> W
+    AF --> W
     P -->|on overall success/failure| N["Office 365 Outlook<br/>(email notification)"]
-    LH --> R["Power BI report<br/>(monitoring dashboard)"]
+    W --> R["Power BI report<br/>(monitoring dashboard)"]
 ```
 
 ---
@@ -38,7 +40,7 @@ flowchart LR
 
 - A **Microsoft Fabric** workspace backed by an active **Capacity** (F2 or higher works for this tutorial).
 - An **Azure Data Lake Storage Gen2** account with a container.
-- Workspace role: **Contributor** (or higher) so you can create Lakehouses, Pipelines, and Connections.
+- Workspace role: **Contributor** (or higher) so you can create Lakehouses, Warehouses, Pipelines, and Connections.
 - Permission to create a **Data Connection** in Fabric. For ADLS Gen2, choose one of:
   - Account Key / SAS (testing only)
   - **Service Principal** (recommended for production)
@@ -99,135 +101,116 @@ The official framework defines six components (Control Table, Data Ingestion, Au
 ADLS Gen2 (raw files)
         │
         ▼
-Metadata Table (config_ingestion) ──► Pipeline (Lookup → ForEach → Copy → Audit Script)
+Warehouse.config_ingestion ──► Pipeline (Lookup → ForEach → Copy → Audit Script)
                                               │                            │
                                               ▼                            ▼
-                                  Fabric Lakehouse (Delta Tables)     audit_log table
-                                              │                            │
-                                              ▼                            ▼
+                                  Fabric Lakehouse (Delta Tables)   Warehouse.audit_log
+                                                                           │
+                                                                           ▼
                                        Email notification           Power BI report
 ```
 
+> ℹ️ **Why two storage items?**
+> - The **Lakehouse** receives the actual ingested data (Delta tables landed by Copy).
+> - The **Warehouse** hosts the two T-SQL tables the pipeline reads from and writes to. The Lakehouse SQL analytics endpoint is **read-only**, so the Script activity's `INSERT INTO audit_log` would fail there — a Warehouse is required for writeable T-SQL.
+
 ---
 
-## 4. Step 1 — Create the Lakehouse
+## 4. Step 1 — Create the Lakehouse and Warehouse
 
-**What:** Provision a Lakehouse to host both the control table and the ingested data.
+**What:** Provision a **Lakehouse** to receive the ingested data and a **Warehouse** to host the metadata + audit tables.
 
-**Why:** Storing the control table inside the same Lakehouse keeps the demo self-contained and avoids a separate Warehouse SKU.
+**Why:** A Warehouse exposes a **read/write T-SQL** surface, which the Script activity needs in order to `INSERT` audit rows. The Lakehouse SQL endpoint is read-only and would reject those inserts.
 
 **How:**
 
 1. Open your Fabric workspace.
-2. Select **+ New item** → **Lakehouse**.
-3. Name it `lh_ingestion_demo` and click **Create**.
-4. In the Lakehouse explorer you will see two top-level folders:
-   - `Tables/` — Delta tables (managed)
-   - `Files/` — unmanaged file storage
+2. Select **+ New item** → **Lakehouse**. Name it `lh_ingestion_demo` and click **Create**.
+   - In the explorer you will see `Tables/` (managed Delta) and `Files/` (unmanaged).
+3. Select **+ New item** → **Warehouse**. Name it `wh_ingestion_demo` and click **Create**.
+   - This is where `config_ingestion` and `audit_log` will live.
 
-> ℹ️ **Note:** The Fabric UI evolves quickly. If a menu name differs, check the [Microsoft Learn Lakehouse docs](https://learn.microsoft.com/fabric/data-engineering/lakehouse-overview).
+> ℹ️ **Note:** The Fabric UI evolves quickly. If a menu name differs, check the Microsoft Learn docs for [Lakehouse](https://learn.microsoft.com/fabric/data-engineering/lakehouse-overview) and [Warehouse](https://learn.microsoft.com/fabric/data-warehouse/data-warehousing).
 
 ---
 
-## 5. Step 2 — Create the Metadata and Audit Tables
+## 5. Step 2 — Create the Metadata and Audit Tables (in the Warehouse)
 
-**What:** Two Delta tables — `config_ingestion` (drives every run) and `audit_log` (records every run).
+**What:** Two T-SQL tables in `wh_ingestion_demo` — `config_ingestion` (drives every run) and `audit_log` (records every run).
 
-**Why:** Treating the source list **and** the run history as data — not as pipeline JSON or log files — is what makes the framework both metadata-driven and observable. Adding a source becomes an `INSERT`; investigating last night's failure becomes a `SELECT`.
+**Why:** Treating the source list **and** the run history as data — not as pipeline JSON or log files — is what makes the framework both metadata-driven and observable. Adding a source becomes an `INSERT`; investigating last night's failure becomes a `SELECT`. They live in a **Warehouse** (not the Lakehouse) so that the pipeline's Script activity can `INSERT` audit rows — the Lakehouse SQL endpoint is read-only.
 
-> 💡 **Run-once notebook:** All the PySpark in this section is bundled in [`notebooks/Step2-Create-Metadata-And-Audit-Tables.ipynb`](notebooks/Step2-Create-Metadata-And-Audit-Tables.ipynb). Import it into your workspace, attach `lh_ingestion_demo`, click **Run all**, and skip ahead to §6 if you don't need the walkthrough below.
+> 💡 **Run-once SQL script:** All the DDL + seed `INSERT`s are bundled in [`warehouse/create-metadata-and-audit-tables.sql`](warehouse/create-metadata-and-audit-tables.sql). In the Warehouse, click **New SQL query**, paste the script, click **Run**, and skip ahead to §6 if you don't need the walkthrough below.
 
 ### 5.1 `config_ingestion` schema
 
-| Column | Type | Description |
+| Column | T-SQL type | Description |
 |---|---|---|
 | `source_id` | INT | Primary key (logical) |
-| `source_system` | STRING | Friendly name of the source, e.g. `adls_sales` |
-| `source_path` | STRING | Full path in ADLS Gen2 relative to the container, e.g. `raw/sales/customers.csv` |
-| `file_format` | STRING | `csv` or `parquet` |
-| `target_table` | STRING | Name of the Delta table in the Lakehouse |
-| `load_mode` | STRING | `full` or `incremental` |
-| `is_active` | BOOLEAN | `true` to include in the next run, `false` to skip |
+| `source_system` | VARCHAR(100) | Friendly name of the source, e.g. `adls_sales` |
+| `source_path` | VARCHAR(500) | Full path in ADLS Gen2 relative to the container, e.g. `raw/sales/customers.csv` |
+| `file_format` | VARCHAR(20) | `csv` or `parquet` |
+| `target_table` | VARCHAR(100) | Name of the Delta table in the Lakehouse |
+| `load_mode` | VARCHAR(20) | `full` or `incremental` |
+| `is_active` | BIT | `1` to include in the next run, `0` to skip |
 
-### 5.2 Create and seed `config_ingestion` (PySpark notebook)
+### 5.2 Create and seed `config_ingestion` (T-SQL)
 
-Open a new **Notebook**, attach it to `lh_ingestion_demo`, then run:
+In the Warehouse, open **New SQL query** and run:
 
-```python
-from pyspark.sql import Row
+```sql
+CREATE TABLE dbo.config_ingestion (
+    source_id       INT          NOT NULL,
+    source_system   VARCHAR(100) NOT NULL,
+    source_path     VARCHAR(500) NOT NULL,
+    file_format     VARCHAR(20)  NOT NULL,
+    target_table    VARCHAR(100) NOT NULL,
+    load_mode       VARCHAR(20)  NOT NULL,
+    is_active       BIT          NOT NULL
+);
 
-rows = [
-    Row(source_id=1, source_system="adls_sales",
-        source_path="raw/sales/customers.csv",
-        file_format="csv", target_table="customers",
-        load_mode="full", is_active=True),
-    Row(source_id=2, source_system="adls_sales",
-        source_path="raw/sales/orders.csv",
-        file_format="csv", target_table="orders",
-        load_mode="full", is_active=True),
-    Row(source_id=3, source_system="adls_sales",
-        source_path="raw/sales/products.csv",
-        file_format="csv", target_table="products",
-        load_mode="full", is_active=True),
-    Row(source_id=4, source_system="adls_sales",
-        source_path="raw/sales/legacy.csv",
-        file_format="csv", target_table="legacy",
-        load_mode="full", is_active=False),  # disabled on purpose
-]
-
-(spark.createDataFrame(rows)
-      .write.mode("overwrite")
-      .format("delta")
-      .saveAsTable("config_ingestion"))
-
-spark.table("config_ingestion").show(truncate=False)
+INSERT INTO dbo.config_ingestion
+    (source_id, source_system, source_path,                  file_format, target_table, load_mode, is_active)
+VALUES
+    (1, 'adls_sales', 'raw/sales/customers.csv', 'csv', 'customers', 'full', 1),
+    (2, 'adls_sales', 'raw/sales/orders.csv',    'csv', 'orders',    'full', 1),
+    (3, 'adls_sales', 'raw/sales/products.csv',  'csv', 'products',  'full', 1),
+    (4, 'adls_sales', 'raw/sales/legacy.csv',    'csv', 'legacy',    'full', 0);  -- disabled on purpose
 ```
 
 ### 5.3 `audit_log` schema
 
 A deliberately small audit table — just enough to answer *"what ran, when, how long, did it work, and how many rows?"*
 
-| Column | Type | Description |
+| Column | T-SQL type | Description |
 |---|---|---|
-| `run_id` | STRING | Pipeline run ID (`@pipeline().RunId`) — groups all rows of one execution |
+| `run_id` | VARCHAR(100) | Pipeline run ID (`@pipeline().RunId`) — groups all rows of one execution |
 | `source_id` | INT | FK back to `config_ingestion.source_id` |
-| `target_table` | STRING | Destination Delta table |
-| `start_time` | TIMESTAMP | When the per-source copy started |
-| `end_time` | TIMESTAMP | When the per-source copy ended |
+| `target_table` | VARCHAR(100) | Destination Delta table |
+| `start_time` | DATETIME2(3) | When the per-source copy started |
+| `end_time` | DATETIME2(3) | When the per-source copy ended |
 | `duration_sec` | INT | `end_time - start_time` in seconds |
 | `rows_copied` | BIGINT | `rowsCopied` reported by the Copy activity |
-| `status` | STRING | `success` or `failed` |
-| `error_message` | STRING | Activity error text on failure, `NULL` on success |
+| `status` | VARCHAR(20) | `success` or `failed` |
+| `error_message` | VARCHAR(4000) | Activity error text on failure, `NULL` on success |
 
 ### 5.4 Create the empty `audit_log` table
 
-In the same notebook:
-
-```python
-from pyspark.sql.types import (
-    StructType, StructField, StringType, IntegerType,
-    LongType, TimestampType
-)
-
-audit_schema = StructType([
-    StructField("run_id",        StringType(),    False),
-    StructField("source_id",     IntegerType(),   True),
-    StructField("target_table",  StringType(),    True),
-    StructField("start_time",    TimestampType(), True),
-    StructField("end_time",      TimestampType(), True),
-    StructField("duration_sec",  IntegerType(),   True),
-    StructField("rows_copied",   LongType(),      True),
-    StructField("status",        StringType(),    False),
-    StructField("error_message", StringType(),    True),
-])
-
-(spark.createDataFrame([], audit_schema)
-      .write.mode("overwrite")
-      .format("delta")
-      .saveAsTable("audit_log"))
+```sql
+CREATE TABLE dbo.audit_log (
+    run_id          VARCHAR(100)  NOT NULL,
+    source_id       INT           NULL,
+    target_table    VARCHAR(100)  NULL,
+    start_time      DATETIME2(3)  NULL,
+    end_time        DATETIME2(3)  NULL,
+    duration_sec    INT           NULL,
+    rows_copied     BIGINT        NULL,
+    status          VARCHAR(20)   NOT NULL,
+    error_message   VARCHAR(4000) NULL
+);
 ```
 
-> 💡 **Tip:** Prefer a JSON or CSV file in `Files/` for the control table? The Lookup activity can read either. A Delta table is recommended because `audit_log` will be appended to from the pipeline via the SQL endpoint.
+> ⚠️ **Warning:** Don't run the `CREATE TABLE dbo.audit_log` a second time once the pipeline is in flight — it will fail because the table already exists. The bundled [`warehouse/create-metadata-and-audit-tables.sql`](warehouse/create-metadata-and-audit-tables.sql) wraps it in an `IF OBJECT_ID(...) IS NULL` guard so re-running the setup script is safe.
 
 ---
 
@@ -270,13 +253,13 @@ audit_schema = StructType([
 ### 7.2 Add the Lookup activity
 
 1. Drag a **Lookup** activity onto the canvas. Name it `LKP_Config`.
-2. **Source:** select the **SQL analytics endpoint** of `lh_ingestion_demo`.
+2. **Connection type:** **Warehouse**. **Workspace:** current. **Warehouse:** `wh_ingestion_demo`.
 3. Toggle **Use query** and paste:
 
    ```sql
    SELECT *
    FROM config_ingestion
-   WHERE is_active = 1;  -- Lakehouse SQL endpoint is T-SQL; use 1/0 for BIT, not true/false
+   WHERE is_active = 1;  -- T-SQL Warehouse uses 1/0 for BIT, not true/false
    ```
 
 4. **Important:** uncheck **First row only** so the activity returns all rows.
@@ -322,7 +305,7 @@ Still inside the ForEach, add **two Script activities** wired to `CP_AdlsToLakeh
 - `SCR_Audit_Success` — connected from Copy via the **green (On success)** arrow.
 - `SCR_Audit_Failure` — connected from Copy via the **red (On failure)** arrow.
 
-For both, set the connection to the **SQL analytics endpoint** of `lh_ingestion_demo` and choose **Script type = Non-query**.
+For both, set the connection to the **Warehouse** `wh_ingestion_demo` (the Script activity needs read/write T-SQL, which the Lakehouse SQL endpoint does not provide) and choose **Script type = Non-query**.
 
 **`SCR_Audit_Success` script:**
 
@@ -450,24 +433,24 @@ If you want a single Copy activity to handle both CSV and Parquet without an `If
 2. Watch the **Output** pane — `LKP_Config` should return 3 rows (the active ones), and `FE_PerSource` should iterate three times.
 3. Open `lh_ingestion_demo` → **Tables/** — you should see `customers`, `orders`, and `products` as Delta tables.
 4. Check your inbox for the success email.
-5. From the **SQL analytics endpoint**, validate row counts and audit rows:
+5. Validate row counts and audit rows. The landed data lives in the Lakehouse SQL endpoint; the audit table lives in the Warehouse:
 
    ```sql
-   -- Data landed?
+   -- Run in the Lakehouse SQL analytics endpoint — did the data land?
    SELECT 'customers' AS table_name, COUNT(*) AS row_count FROM customers
    UNION ALL
    SELECT 'orders',    COUNT(*) FROM orders
    UNION ALL
    SELECT 'products',  COUNT(*) FROM products;
 
-   -- Audit captured?
+   -- Run in the Warehouse wh_ingestion_demo — did the pipeline log the run?
    SELECT target_table, status, rows_copied, duration_sec, start_time
    FROM   audit_log
    WHERE  run_id = '<paste the run id from the pipeline monitor>'
    ORDER  BY start_time;
    ```
 
-> ℹ️ **Note:** If a table is missing, check that its `is_active` flag is `true` and that the file path in the control table matches the actual ADLS layout. If the data landed but no audit row appeared, double-check the Script activity is connected to the Lakehouse **SQL analytics endpoint** (not the Lakehouse itself).
+> ℹ️ **Note:** If a table is missing, check that its `is_active` flag is `1` and that the file path in the control table matches the actual ADLS layout. If the data landed but no audit row appeared, double-check the Script activity is connected to the **Warehouse** (not the Lakehouse SQL endpoint, which would silently fail the INSERT).
 
 ### 9.1 Force a failure to test the failure path
 
@@ -481,19 +464,13 @@ Temporarily flip one row's `source_path` to a non-existent file, re-run, and con
 
 ## 10. Step 7 — Add a New Source Without Touching the Pipeline
 
-This is where the pattern earns its keep. Imagine a new `inventory.csv` arrives in ADLS. To onboard it:
+This is where the pattern earns its keep. Imagine a new `inventory.csv` arrives in ADLS. To onboard it, run one INSERT in the Warehouse:
 
-```python
-from pyspark.sql import Row
-
-new_source = spark.createDataFrame([
-    Row(source_id=5, source_system="adls_sales",
-        source_path="raw/sales/inventory.csv",
-        file_format="csv", target_table="inventory",
-        load_mode="full",  is_active=True)
-])
-
-new_source.write.mode("append").format("delta").saveAsTable("config_ingestion")
+```sql
+INSERT INTO dbo.config_ingestion
+    (source_id, source_system, source_path,             file_format, target_table, load_mode, is_active)
+VALUES
+    (5, 'adls_sales', 'raw/sales/inventory.csv', 'csv', 'inventory', 'full', 1);
 ```
 
 Re-run `pl_metadata_ingest`. The Lookup now returns four rows, ForEach iterates four times, `inventory` appears in the Lakehouse, and a new `audit_log` row is recorded — **with zero pipeline edits**.
@@ -506,7 +483,7 @@ Re-run `pl_metadata_ingest`. The Lookup now returns four rows, ForEach iterates 
 
 **Why:** Email tells you about *the latest run*; the dashboard tells you about *trends* (slow tables, recurring failures, row-count drift).
 
-### 11.1 Useful SQL queries (SQL analytics endpoint)
+### 11.1 Useful SQL queries (run in the Warehouse `wh_ingestion_demo`)
 
 ```sql
 -- Latest run summary (one row per table for the most recent run)
@@ -543,7 +520,7 @@ ORDER  BY load_date;
 
 ### 11.2 Build a simple Power BI report
 
-1. In the Lakehouse, click **New Power BI report** (top toolbar) and pick **Continue** to create a new model.
+1. In the Warehouse `wh_ingestion_demo`, click **New Power BI report** (top toolbar) and pick **Continue** to create a new model.
 2. Add `audit_log` to the model.
 3. Build three visuals on a single page:
 
@@ -568,8 +545,8 @@ Even in a simplified build, a few habits pay off:
 - **Use `@pipeline().RunId`** as the correlation ID in every audit row and every email subject.
 - **Parameterize the connection** (or use **Workspace Identity**) so the same pipeline definition can be deployed across dev/test/prod.
 - **Filter `is_active = true` in Lookup**, not in ForEach — it keeps the iteration set small.
-- **Keep both `config_ingestion` and `audit_log` in the same Lakehouse** to avoid cross-item permission issues during early development.
-- **Add an `OPTIMIZE audit_log` / VACUUM job** monthly once you cross a few hundred thousand audit rows.
+- **Keep both `config_ingestion` and `audit_log` in the same Warehouse** to avoid cross-item permission issues and so a single connection serves both the Lookup and Script activities.
+- **Archive old `audit_log` rows** to a history table (or partition by month) once you cross a few million rows.
 
 ---
 
