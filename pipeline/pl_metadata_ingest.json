@@ -378,6 +378,25 @@
                             "externalReferences": {
                                 "connection": "<OFFICE365_EMAIL_CONNECTION_ID>"
                             }
+                        },
+                        {
+                            "name": "FAIL_Pipeline",
+                            "type": "Fail",
+                            "dependsOn": [
+                                {
+                                    "activity": "EMAIL_Failure",
+                                    "dependencyConditions": [
+                                        "Completed"
+                                    ]
+                                }
+                            ],
+                            "typeProperties": {
+                                "message": {
+                                    "value": "@concat('Pipeline pl_metadata_ingest had ', string(activity('LKP_RunSummary').output.firstRow.fail_count), ' failed source(s). See audit_log WHERE run_id = ''', pipeline().RunId, '''.')",
+                                    "type": "Expression"
+                                },
+                                "errorCode": "PipelineHadFailedSources"
+                            }
                         }
                     ]
                 }
